@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Wrld</title>
 <style>
   :root {
@@ -71,12 +71,29 @@
   .recipe span { color: var(--dim); font-size: 11px; margin-left: 6px; }
   .recipe.no { opacity: 0.4; }
   #craft .frag { margin-top: 12px; color: var(--dim); font-size: 11px; letter-spacing: 0.1em; }
+
+  /* --- touch controls: hidden unless body.touch --- */
+  #lookPad { position: absolute; inset: 0; pointer-events: none; touch-action: none; }
+  body.touch #lookPad { pointer-events: auto; }
+  #joy { position: absolute; left: 22px; bottom: 96px; width: 124px; height: 124px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.3); pointer-events: auto; touch-action: none; display: none; }
+  body.touch #joy { display: block; }
+  #joyKnob { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; border-radius: 50%; background: rgba(232,228,216,0.35); transform: translate(-50%,-50%); }
+  .tbtn { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.3); color: var(--ink); display: none; align-items: center; justify-content: center; font-family: inherit; padding: 0; }
+  body.touch .tbtn { display: flex; }
+  body.touch .slot { pointer-events: auto; }
+  .tbtn.on { border-color: var(--amber); color: var(--amber); }
+  #btnJumpT { position: absolute; right: 26px; bottom: 120px; width: 68px; height: 68px; border-radius: 50%; font-size: 24px; }
+  #btnSneakT { position: absolute; right: 110px; bottom: 96px; width: 52px; height: 52px; border-radius: 50%; font-size: 18px; }
+  #topBtnsT { position: absolute; top: 8px; right: 10px; display: flex; gap: 10px; pointer-events: none; }
+  #topBtnsT .tbtn { width: 44px; height: 44px; font-size: 16px; }
+  body.touch #topline { font-size: 10px; }
 </style>
 </head>
 <body>
 <canvas id="glcanvas"></canvas>
 
 <div id="hud" class="hidden">
+  <div id="lookPad"></div>
   <div id="vignette"></div>
   <div id="crosshair">+</div>
   <div id="breakbar"><div></div></div>
@@ -85,6 +102,15 @@
   <div id="air"></div>
   <div id="hotbar"></div>
   <div id="toast"></div>
+  <div id="joy"><div id="joyKnob"></div></div>
+  <button id="btnJumpT" class="tbtn">&#9650;</button>
+  <button id="btnSneakT" class="tbtn">&#9660;</button>
+  <div id="topBtnsT">
+    <button id="btnPauseT" class="tbtn">II</button>
+    <button id="btnCraftT" class="tbtn">&#9874;</button>
+    <button id="btnLoreT" class="tbtn">&#10022;</button>
+    <button id="btnFlyT" class="tbtn">&#10148;</button>
+  </div>
 </div>
 
 <div id="craft" class="hidden">
@@ -145,6 +171,9 @@
 <!-- ============================================================= -->
 <script>
 "use strict";
+
+/** Coarse-pointer devices (phones/tablets) get the touch control scheme. */
+const IS_TOUCH = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
 
 /**
  * Deterministic PRNG (mulberry32). Every random decision in Wrld flows
@@ -393,7 +422,8 @@ class Renderer {
   }
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Phones render at 1x: fill-rate is the bottleneck on mobile GPUs.
+    const dpr = Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 1 : 1.5);
     this.canvas.width = innerWidth * dpr;
     this.canvas.height = innerHeight * dpr;
     this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -1203,7 +1233,12 @@ class Player {
     if (input.back) mz -= 1;
     if (input.left) mx -= 1;
     if (input.right) mx += 1;
-    const len = Math.hypot(mx, mz) || 1;
+    if (IS_TOUCH && typeof TouchCtl !== "undefined") {
+      mx += TouchCtl.joyVec[0];
+      mz += TouchCtl.joyVec[1];
+    }
+    // Normalize only past unit length so the joystick stays analog.
+    const len = Math.max(1, Math.hypot(mx, mz));
     mx /= len; mz /= len;
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const wx = (mx * cy + mz * sy) * speed;
@@ -1421,6 +1456,11 @@ const UI = {
     for (const id of ["hud", "menu", "loreSplash", "pause", "death", "hotbar", "hearts", "topline", "toast", "lorePanel", "loreText", "fragCount", "splashLore", "seedInput", "vignette", "breakbar", "air", "craft", "craftList", "rdVal"])
       this.el[id] = document.getElementById(id);
     this.el.breakfill = this.el.breakbar.firstElementChild;
+    // Craft recipes are tappable (touch has no digit keys).
+    this.el.craftList.addEventListener("click", e => {
+      const row = e.target.closest(".recipe");
+      if (row) Game.craft(+row.getAttribute("data-i"));
+    });
   },
 
   show(id) { this.el[id].classList.remove("hidden"); },
@@ -1442,6 +1482,7 @@ const UI = {
       cnt.className = "cnt";
       slot.appendChild(cv);
       slot.appendChild(cnt);
+      slot.onclick = () => { player.selected = i; this.updateHotbar(player); };
       this.el.hotbar.appendChild(slot);
       this.slotEls.push({ slot, cnt });
     }
@@ -1499,7 +1540,7 @@ const UI = {
     const rows = RECIPES.map((r, i) => {
       const ok = Game.mode !== "survival" || r.cost.every(([id, n]) => (player.counts[id] || 0) >= n);
       const cost = r.cost.map(([id, n]) => `${n} ${BLOCKS[id].name}`).join(" + ");
-      return `<div class="recipe ${ok ? "ok" : "no"}">[${i + 1}] ${r.label}<span>${cost}</span></div>`;
+      return `<div class="recipe ${ok ? "ok" : "no"}" data-i="${i}">[${i + 1}] ${r.label}<span>${cost}</span></div>`;
     }).join("");
     this.el.craftList.innerHTML = rows +
       `<div class="frag">Current pick: ${["none", "wooden", "stone"][player.tools.pick]}</div>`;
@@ -1533,6 +1574,136 @@ const RECIPES = [
   { label: "3 Cobble → Stone Pick", cost: [[B.COBBLE, 3]], gives: { pick: 2 } }
 ];
 
+/**
+ * Touch control scheme (coarse-pointer devices): left-thumb analog joystick
+ * to move, drag anywhere else to look, tap to place, long-press to mine
+ * (feeding the same held-mouse pipeline as desktop), plus on-screen buttons
+ * for jump, sneak, pause, craft, lore, and fly.
+ */
+const TouchCtl = {
+  joyVec: [0, 0],
+  joyId: null,
+  lookId: null,
+  lookX: 0, lookY: 0,
+  tapX: 0, tapY: 0, tapT: 0, tapMoved: false,
+  pressTimer: null,
+  mining: false,
+
+  init() {
+    if (!IS_TOUCH) return;
+    document.body.classList.add("touch");
+    const joy = document.getElementById("joy");
+    const knob = document.getElementById("joyKnob");
+    const pad = document.getElementById("lookPad");
+    const opt = { passive: false };
+
+    joy.addEventListener("touchstart", e => {
+      e.preventDefault();
+      if (this.joyId !== null) return;
+      const t = e.changedTouches[0];
+      this.joyId = t.identifier;
+      this.moveKnob(joy, knob, t);
+    }, opt);
+    joy.addEventListener("touchmove", e => {
+      e.preventDefault();
+      for (const t of e.changedTouches)
+        if (t.identifier === this.joyId) this.moveKnob(joy, knob, t);
+    }, opt);
+    const joyEnd = e => {
+      for (const t of e.changedTouches)
+        if (t.identifier === this.joyId) {
+          this.joyId = null;
+          this.joyVec = [0, 0];
+          knob.style.transform = "translate(-50%,-50%)";
+        }
+    };
+    joy.addEventListener("touchend", joyEnd);
+    joy.addEventListener("touchcancel", joyEnd);
+
+    pad.addEventListener("touchstart", e => {
+      e.preventDefault();
+      if (this.lookId !== null || !Game.isLive()) return;
+      const t = e.changedTouches[0];
+      this.lookId = t.identifier;
+      this.lookX = this.tapX = t.clientX;
+      this.lookY = this.tapY = t.clientY;
+      this.tapT = performance.now();
+      this.tapMoved = false;
+      this.mining = false;
+      clearTimeout(this.pressTimer);
+      this.pressTimer = setTimeout(() => {
+        if (!this.tapMoved && this.lookId !== null) {
+          this.mining = true;
+          Game.mouse.left = true;
+        }
+      }, 260);
+    }, opt);
+    pad.addEventListener("touchmove", e => {
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (t.identifier !== this.lookId || !Game.player) continue;
+        const dx = t.clientX - this.lookX, dy = t.clientY - this.lookY;
+        this.lookX = t.clientX; this.lookY = t.clientY;
+        Game.player.yaw += dx * 0.0045;
+        Game.player.pitch -= dy * 0.0045;
+        Game.player.pitch = Math.max(-1.55, Math.min(1.55, Game.player.pitch));
+        if (Math.hypot(t.clientX - this.tapX, t.clientY - this.tapY) > 12) this.tapMoved = true;
+      }
+    }, opt);
+    const padEnd = e => {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== this.lookId) continue;
+        this.lookId = null;
+        clearTimeout(this.pressTimer);
+        if (this.mining) {
+          this.mining = false;
+          Game.mouse.left = false;
+          Game.resetBreaking();
+        } else if (!this.tapMoved && performance.now() - this.tapT < 260 && Game.isLive()) {
+          Game.actionPlace();
+        }
+      }
+    };
+    pad.addEventListener("touchend", padEnd);
+    pad.addEventListener("touchcancel", padEnd);
+
+    const bind = (id, on, off) => {
+      const el = document.getElementById(id);
+      el.addEventListener("touchstart", e => { e.preventDefault(); on(); }, opt);
+      if (off) {
+        el.addEventListener("touchend", e => { e.preventDefault(); off(); }, opt);
+        el.addEventListener("touchcancel", () => off());
+      }
+      return el;
+    };
+    bind("btnJumpT", () => { Game.input.jump = true; }, () => { Game.input.jump = false; });
+    const sneakEl = bind("btnSneakT", () => {
+      Game.input.sneak = !Game.input.sneak;
+      sneakEl.classList.toggle("on", Game.input.sneak);
+    });
+    bind("btnPauseT", () => Game.touchPause());
+    bind("btnCraftT", () => Game.toggleCraft());
+    bind("btnLoreT", () => UI.toggleLore());
+    const flyEl = bind("btnFlyT", () => {
+      if (Game.player && Game.mode === "creative") {
+        Game.player.flying = !Game.player.flying;
+        flyEl.classList.toggle("on", Game.player.flying);
+      }
+    });
+  },
+
+  moveKnob(joy, knob, t) {
+    const r = joy.getBoundingClientRect();
+    let dx = t.clientX - (r.left + r.width / 2);
+    let dy = t.clientY - (r.top + r.height / 2);
+    const max = r.width / 2 - 20;
+    const d = Math.hypot(dx, dy);
+    if (d > max) { dx = dx / d * max; dy = dy / d * max; }
+    knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    this.joyVec = [dx / max, -dy / max];
+  }
+};
+
 const Game = {
   state: "menu",
   mode: "creative",
@@ -1563,6 +1734,7 @@ const Game = {
   saveTimer: 0,
   seedStr: "",
   starMesh: null,
+  touchActive: false,
 
   init() {
     UI.init();
@@ -1582,8 +1754,38 @@ const Game = {
       this.lockPointer();
     };
     addEventListener("beforeunload", () => this.saveWorld());
+    TouchCtl.init();
+    if (IS_TOUCH) {
+      this.setRenderRadius(4);
+      document.querySelector(".controls-hint").innerHTML =
+        "joystick move &middot; drag to look &middot; tap place &middot; hold to mine<br>" +
+        "&#9650; jump &middot; &#9660; sneak &middot; II pause &middot; &#9874; craft &middot; &#10022; echo";
+    }
     this.updateContinue();
     requestAnimationFrame(t => this.frame(t));
+  },
+
+  /** True while gameplay input should apply: pointer-locked on desktop,
+   *  unpaused on touch devices. */
+  isLive() {
+    if (this.state !== "playing" || !this.player || this.player.hp <= 0) return false;
+    return document.pointerLockElement === this.renderer.canvas || (IS_TOUCH && this.touchActive);
+  },
+
+  touchPause() {
+    if (this.state !== "playing" || !this.touchActive) return;
+    this.saveWorld();
+    this.touchActive = false;
+    this.mouse.left = this.mouse.right = false;
+    this.resetBreaking();
+    UI.show("pause");
+  },
+
+  toggleCraft() {
+    if (this.state !== "playing" || !this.player) return;
+    this.craftOpen = !this.craftOpen;
+    UI.el.craft.classList.toggle("hidden", !this.craftOpen);
+    if (this.craftOpen) UI.renderCraft(this.player);
   },
 
   setRenderRadius(r) {
@@ -1614,6 +1816,7 @@ const Game = {
   quitToMenu() {
     this.saveWorld();
     this.state = "menu";
+    this.touchActive = false;
     this.player = null;
     this.world = null;
     this.mobs = []; this.arrows = []; this.particles = [];
@@ -1680,6 +1883,8 @@ const Game = {
     if (this.starMesh) this.renderer.deleteMesh(this.starMesh);
     this.starMesh = this.renderer.createMesh(buildStarField(seed));
 
+    document.getElementById("btnFlyT").style.display = (IS_TOUCH && this.mode === "creative") ? "flex" : "none";
+
     UI.buildHotbar(this.player);
     UI.updateHotbar(this.player);
     UI.setLore(this.world.echo, Math.min(this.echoesFound, this.world.echo.fragments.length));
@@ -1707,7 +1912,8 @@ const Game = {
   onDeath() {
     this.mouse.left = this.mouse.right = false;
     this.resetBreaking();
-    document.exitPointerLock();
+    this.touchActive = false;
+    if (document.exitPointerLock) document.exitPointerLock();
     UI.show("death");
   },
 
@@ -1715,7 +1921,9 @@ const Game = {
     Sound.ensure();
     Sound.startWind();
     UI.hide("pause");
-    this.renderer.canvas.requestPointerLock();
+    this.touchActive = true;
+    // Touch devices have no pointer lock; isLive() gates on touchActive instead.
+    if (!IS_TOUCH && this.renderer.canvas.requestPointerLock) this.renderer.canvas.requestPointerLock();
   },
 
   bindInput() {
@@ -1730,11 +1938,7 @@ const Game = {
       }
       if (e.code === "KeyF" && this.mode === "creative") this.player.flying = !this.player.flying;
       if (e.code === "KeyL") UI.toggleLore();
-      if (e.code === "KeyC") {
-        this.craftOpen = !this.craftOpen;
-        UI.el.craft.classList.toggle("hidden", !this.craftOpen);
-        if (this.craftOpen) UI.renderCraft(this.player);
-      }
+      if (e.code === "KeyC") this.toggleCraft();
     });
     addEventListener("keyup", e => { if (map[e.code] !== undefined) this.input[map[e.code]] = false; });
 
@@ -1863,6 +2067,7 @@ const Game = {
     this.world.setBlock(hit.x, hit.y, hit.z, B.AIR);
     this.spawnBlockParticles(hit.x, hit.y, hit.z, Atlas.tileAvg[def.tiles[1]]);
     Sound.blip(300 + Math.random() * 80, 0.06, 0.08);
+    if (IS_TOUCH && navigator.vibrate) navigator.vibrate(18);
 
     if (def.echo) {
       Sound.echoMelody(this.world.seed + this.echoesFound);
@@ -2150,7 +2355,7 @@ const Game = {
     }
 
     // Outline the targeted block.
-    if (document.pointerLockElement === this.renderer.canvas) {
+    if (this.isLive()) {
       const dir = this.player.lookDir();
       const hit = raycastBlocks(this.world, eye[0], eye[1], eye[2], dir[0], dir[1], dir[2], 5.5);
       if (hit) this.renderer.drawBlockOutline(pv, hit.x, hit.y, hit.z, [1, 1, 1]);
@@ -2196,8 +2401,7 @@ const Game = {
       this.fpsAccum = 0; this.fpsFrames = 0;
     }
 
-    if (this.state === "playing" && this.player && this.player.hp > 0 &&
-        document.pointerLockElement === this.renderer.canvas) {
+    if (this.isLive()) {
       this.update(dt);
     }
     this.render();
