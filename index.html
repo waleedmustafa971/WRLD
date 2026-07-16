@@ -24,7 +24,8 @@
 
   #menu h1 { font-size: 72px; letter-spacing: 0.35em; font-weight: 400; margin-bottom: 4px; text-shadow: 0 0 24px rgba(217,164,65,0.35); }
   #menu h1 span { color: var(--amber); }
-  #menu .tag { color: var(--dim); letter-spacing: 0.2em; font-size: 12px; margin-bottom: 42px; text-transform: uppercase; }
+  #menu .tag { color: var(--dim); letter-spacing: 0.2em; font-size: 12px; margin-bottom: 14px; text-transform: uppercase; }
+  #greet { color: var(--amber); font-size: 13px; letter-spacing: 0.12em; margin-bottom: 28px; min-height: 17px; }
   .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; width: 320px; }
   .field label { font-size: 11px; letter-spacing: 0.18em; color: var(--dim); text-transform: uppercase; }
   .field input { background: rgba(0,0,0,0.4); border: 1px solid var(--edge); color: var(--ink); padding: 10px 12px; font-family: inherit; font-size: 14px; outline: none; }
@@ -149,6 +150,11 @@
 <div id="menu" class="overlay">
   <h1>WR<span>L</span>D</h1>
   <div class="tag">every seed remembers</div>
+  <div id="greet"></div>
+  <div class="field">
+    <label for="nameInput">Traveler name</label>
+    <input id="nameInput" type="text" placeholder="what should the world call you?" autocomplete="off">
+  </div>
   <div class="field">
     <label for="seedInput">World seed</label>
     <input id="seedInput" type="text" placeholder="leave blank for random" autocomplete="off">
@@ -1584,6 +1590,48 @@ class Mob {
 <script>
 "use strict";
 
+/**
+ * Menu greeting: "hi, <name> <flag>". The name is whatever the player types
+ * (remembered in localStorage); the flag comes from IP geolocation and is
+ * skipped silently when offline or blocked. No personal data leaves the
+ * machine beyond the geolocation request itself.
+ */
+const Greet = {
+  flag: "",
+
+  init() {
+    const input = document.getElementById("nameInput");
+    try { input.value = localStorage.getItem("wrld_name") || ""; } catch (e) {}
+    input.addEventListener("input", () => {
+      try { localStorage.setItem("wrld_name", input.value.trim()); } catch (e) {}
+      this.update();
+    });
+    this.update();
+    this.locate();
+  },
+
+  async locate() {
+    for (const url of ["https://ipwho.is/", "https://ipapi.co/json/"]) {
+      try {
+        const j = await (await fetch(url)).json();
+        const cc = (j.country_code || "").toUpperCase();
+        if (j.success !== false && /^[A-Z]{2}$/.test(cc)) {
+          // Country code -> regional-indicator pair = flag emoji.
+          this.flag = cc.replace(/./g, ch => String.fromCodePoint(127397 + ch.charCodeAt(0)));
+          this.update();
+          return;
+        }
+      } catch (e) { /* offline or blocked — try the next service */ }
+    }
+  },
+
+  update() {
+    let name = "";
+    try { name = (localStorage.getItem("wrld_name") || "").trim(); } catch (e) {}
+    document.getElementById("greet").textContent = `hi, ${name || "wanderer"} ${this.flag}`.trim();
+  }
+};
+
 const UI = {
   el: {},
   slotEls: [],
@@ -1890,6 +1938,7 @@ const Game = {
 
   init() {
     UI.init();
+    Greet.init();
     this.renderer = new Renderer(document.getElementById("glcanvas"));
     this.bindInput();
     document.getElementById("btnSurvival").onclick = () => this.startWorld("survival");
@@ -2081,7 +2130,8 @@ const Game = {
       // Returning players skip the lore splash.
       UI.show("hud");
       this.lockPointer();
-      UI.toast("the world remembers you", 2600);
+      const wName = (localStorage.getItem("wrld_name") || "").trim();
+      UI.toast(wName ? `the world remembers you, ${wName}` : "the world remembers you", 2600);
     } else UI.show("loreSplash");
   },
 
