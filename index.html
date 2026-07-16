@@ -26,6 +26,12 @@
   #menu h1 span { color: var(--amber); }
   #menu .tag { color: var(--dim); letter-spacing: 0.2em; font-size: 12px; margin-bottom: 14px; text-transform: uppercase; }
   #greet { color: var(--amber); font-size: 13px; letter-spacing: 0.12em; margin-bottom: 28px; min-height: 17px; }
+  #namePrompt .panel { background: var(--panel); border: 1px solid var(--edge); padding: 34px 38px; max-width: 460px; text-align: center; margin: 0 16px; }
+  #namePrompt h2 { font-weight: 400; letter-spacing: 0.3em; margin-bottom: 16px; font-size: 18px; }
+  #namePrompt p { color: var(--dim); font-size: 12px; line-height: 1.9; margin-bottom: 20px; letter-spacing: 0.04em; }
+  #namePrompt input { width: 100%; background: rgba(0,0,0,0.4); border: 1px solid var(--edge); color: var(--ink); padding: 10px 12px; font-family: inherit; font-size: 14px; outline: none; margin-bottom: 18px; }
+  #namePrompt input:focus { border-color: var(--amber); }
+  #namePrompt .row { display: flex; gap: 12px; justify-content: center; }
   .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; width: 320px; }
   .field label { font-size: 11px; letter-spacing: 0.18em; color: var(--dim); text-transform: uppercase; }
   .field input { background: rgba(0,0,0,0.4); border: 1px solid var(--edge); color: var(--ink); padding: 10px 12px; font-family: inherit; font-size: 14px; outline: none; }
@@ -153,7 +159,7 @@
   <div id="greet"></div>
   <div class="field">
     <label for="nameInput">Traveler name</label>
-    <input id="nameInput" type="text" placeholder="what should the world call you?" autocomplete="off">
+    <input id="nameInput" type="text" name="name" placeholder="what should the world call you?" autocomplete="name">
   </div>
   <div class="field">
     <label for="seedInput">World seed</label>
@@ -169,6 +175,23 @@
   <div class="controls-hint">
     WASD move &middot; Ctrl / 2&times;W sprint &middot; Space jump &middot; Shift sneak &middot; hold LMB mine &middot; RMB place<br>
     1&ndash;9 or wheel hotbar &middot; E eat &middot; C craft &middot; F fly (creative) &middot; L world echo &middot; Esc pause
+  </div>
+</div>
+
+<div id="namePrompt" class="overlay hidden" style="z-index: 30;">
+  <div class="panel">
+    <h2>WHO WANDERS HERE?</h2>
+    <p>wrld runs entirely in your browser &mdash; there is no server, no account,
+    and nothing you enter ever leaves this device. tap the field below and your
+    browser can fill in your email for you; the world will call you by its first
+    name. or just type any name you like.</p>
+    <form id="whoForm">
+      <input id="whoInput" type="email" name="email" autocomplete="email" placeholder="email or name" spellcheck="false">
+      <div class="row">
+        <button type="submit">Continue</button>
+        <button type="button" id="whoSkip">Skip</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -1608,6 +1631,42 @@ const Greet = {
     });
     this.update();
     this.locate();
+    let known = "";
+    try { known = localStorage.getItem("wrld_name") || localStorage.getItem("wrld_asked") || ""; } catch (e) {}
+    if (!known) this.ask();
+  },
+
+  /** First-visit prompt: browser autofill supplies the email in one tap
+   *  (that tap is the consent — pages can't read accounts silently), and
+   *  the first name is derived from it. Everything stays in localStorage. */
+  ask() {
+    const ov = document.getElementById("namePrompt");
+    ov.classList.remove("hidden");
+    const done = save => {
+      if (save) {
+        const nm = this.nameFrom(document.getElementById("whoInput").value);
+        if (nm) {
+          try { localStorage.setItem("wrld_name", nm); } catch (e) {}
+          document.getElementById("nameInput").value = nm;
+        }
+      }
+      try { localStorage.setItem("wrld_asked", "1"); } catch (e) {}
+      ov.classList.add("hidden");
+      this.update();
+    };
+    document.getElementById("whoForm").addEventListener("submit", e => { e.preventDefault(); done(true); });
+    document.getElementById("whoSkip").addEventListener("click", () => done(false));
+  },
+
+  /** "john.smith84@x.com" -> "John"; plain text passes through as-is. */
+  nameFrom(v) {
+    v = (v || "").trim();
+    const at = v.indexOf("@");
+    if (at > 0) {
+      const first = v.slice(0, at).split(/[._\-+0-9]+/).filter(Boolean)[0] || "";
+      return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
+    }
+    return v.slice(0, 24);
   },
 
   async locate() {
