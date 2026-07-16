@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Wrld</title>
 <style>
   :root {
@@ -15,6 +15,8 @@
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: var(--void); font-family: "Courier New", ui-monospace, monospace; color: var(--ink); }
+  /* dvh tracks the mobile URL-bar collapse; falls back to 100% above. */
+  body { height: 100dvh; }
   #glcanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
   .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; background: radial-gradient(ellipse at 50% 30%, #16202e 0%, var(--void) 70%); z-index: 20; }
@@ -40,14 +42,14 @@
 
   #hud { position: absolute; inset: 0; pointer-events: none; z-index: 10; }
   #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); font-size: 18px; color: rgba(255,255,255,0.75); text-shadow: 0 0 3px #000; }
-  #hotbar { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; }
+  #hotbar { position: absolute; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); display: flex; gap: 4px; }
   .slot { width: 48px; height: 48px; border: 2px solid rgba(255,255,255,0.25); background: rgba(0,0,0,0.45); position: relative; }
   .slot.sel { border-color: var(--amber); box-shadow: 0 0 10px rgba(217,164,65,0.5); }
   .slot canvas { width: 100%; height: 100%; image-rendering: pixelated; }
   .slot .cnt { position: absolute; right: 3px; bottom: 1px; font-size: 11px; color: #fff; text-shadow: 1px 1px 0 #000; }
-  #hearts { position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%); font-size: 16px; letter-spacing: 2px; text-shadow: 1px 1px 0 #000; }
-  #food { position: absolute; bottom: 70px; left: calc(50% + 108px); font-size: 14px; text-shadow: 1px 1px 0 #000; pointer-events: auto; cursor: pointer; user-select: none; -webkit-user-select: none; }
-  #topline { position: absolute; top: 10px; left: 12px; font-size: 12px; color: var(--ink); text-shadow: 1px 1px 0 #000; line-height: 1.8; }
+  #hearts { position: absolute; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); font-size: 16px; letter-spacing: 2px; text-shadow: 1px 1px 0 #000; }
+  #food { position: absolute; bottom: calc(70px + env(safe-area-inset-bottom, 0px)); left: calc(50% + 108px); font-size: 14px; text-shadow: 1px 1px 0 #000; pointer-events: auto; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  #topline { position: absolute; top: calc(10px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); font-size: 12px; color: var(--ink); text-shadow: 1px 1px 0 #000; line-height: 1.8; }
   #toast { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); max-width: 520px; text-align: center; font-style: italic; font-size: 15px; color: #cbb8ff; text-shadow: 0 0 8px rgba(120,80,255,0.6), 1px 1px 0 #000; opacity: 0; transition: opacity .8s; }
 
   #lorePanel { position: absolute; right: 16px; top: 60px; width: 340px; background: var(--panel); border: 1px solid var(--edge); padding: 18px 20px; z-index: 15; }
@@ -64,7 +66,7 @@
   #vignette { position: absolute; inset: 0; pointer-events: none; z-index: 12; box-shadow: inset 0 0 140px 48px rgba(205, 30, 30, 0.85); opacity: 0; transition: opacity .35s; }
   #breakbar { position: absolute; left: 50%; top: calc(50% + 20px); transform: translateX(-50%); width: 46px; height: 5px; border: 1px solid rgba(255,255,255,0.5); background: rgba(0,0,0,0.5); display: none; }
   #breakbar div { height: 100%; width: 0%; background: var(--amber); }
-  #air { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); font-size: 13px; letter-spacing: 3px; color: #7fc4ff; text-shadow: 1px 1px 0 #000; }
+  #air { position: absolute; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); font-size: 13px; letter-spacing: 3px; color: #7fc4ff; text-shadow: 1px 1px 0 #000; }
 
   #craft { position: absolute; left: 16px; top: 60px; width: 330px; background: var(--panel); border: 1px solid var(--edge); padding: 18px 20px; z-index: 15; }
   #craft h3 { font-size: 12px; letter-spacing: 0.3em; color: var(--amber); text-transform: uppercase; margin-bottom: 12px; }
@@ -76,18 +78,36 @@
   /* --- touch controls: hidden unless body.touch --- */
   #lookPad { position: absolute; inset: 0; pointer-events: none; touch-action: none; }
   body.touch #lookPad { pointer-events: auto; }
-  #joy { position: absolute; left: 22px; bottom: 96px; width: 124px; height: 124px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.3); pointer-events: auto; touch-action: none; display: none; }
+  #joy { position: absolute; left: calc(22px + env(safe-area-inset-left, 0px)); bottom: calc(96px + env(safe-area-inset-bottom, 0px)); width: 124px; height: 124px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.3); pointer-events: auto; touch-action: none; display: none; }
   body.touch #joy { display: block; }
   #joyKnob { position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; border-radius: 50%; background: rgba(232,228,216,0.35); transform: translate(-50%,-50%); }
   .tbtn { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.3); color: var(--ink); display: none; align-items: center; justify-content: center; font-family: inherit; padding: 0; }
   body.touch .tbtn { display: flex; }
   body.touch .slot { pointer-events: auto; }
   .tbtn.on { border-color: var(--amber); color: var(--amber); }
-  #btnJumpT { position: absolute; right: 26px; bottom: 120px; width: 68px; height: 68px; border-radius: 50%; font-size: 24px; }
-  #btnSneakT { position: absolute; right: 110px; bottom: 96px; width: 52px; height: 52px; border-radius: 50%; font-size: 18px; }
-  #topBtnsT { position: absolute; top: 8px; right: 10px; display: flex; gap: 10px; pointer-events: none; }
+  #btnJumpT { position: absolute; right: calc(26px + env(safe-area-inset-right, 0px)); bottom: calc(120px + env(safe-area-inset-bottom, 0px)); width: 68px; height: 68px; border-radius: 50%; font-size: 24px; }
+  #btnSneakT { position: absolute; right: calc(110px + env(safe-area-inset-right, 0px)); bottom: calc(96px + env(safe-area-inset-bottom, 0px)); width: 52px; height: 52px; border-radius: 50%; font-size: 18px; }
+  #topBtnsT { position: absolute; top: calc(8px + env(safe-area-inset-top, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); display: flex; gap: 10px; pointer-events: none; }
   #topBtnsT .tbtn { width: 44px; height: 44px; font-size: 16px; }
   body.touch #topline { font-size: 10px; }
+
+  #pause .opt span { display: inline-block; min-width: 40px; text-align: center; }
+  #autoJumpRow { display: none; }
+  body.touch #autoJumpRow { display: block; }
+  body.touch #pause .opt button { padding: 12px 16px; min-width: 44px; }
+
+  /* Narrow (portrait phone) screens: shrink the hotbar so 9 slots fit. */
+  @media (max-width: 520px) {
+    .slot { width: 36px; height: 36px; }
+    #hotbar { gap: 3px; }
+    .slot .cnt { font-size: 9px; }
+    #hearts { font-size: 13px; bottom: calc(58px + env(safe-area-inset-bottom, 0px)); }
+    #food { font-size: 12px; bottom: calc(57px + env(safe-area-inset-bottom, 0px)); left: calc(50% + 88px); }
+    #air { bottom: calc(78px + env(safe-area-inset-bottom, 0px)); }
+    #menu h1 { font-size: 48px; }
+    .field { width: 260px; }
+    #pause .panel, #death .panel { padding: 28px 30px; }
+  }
 </style>
 </head>
 <body>
@@ -157,6 +177,8 @@
     <h2>PAUSED</h2>
     <button id="btnResume">Resume</button>
     <div class="opt">Render distance <button id="rdMinus">&minus;</button><span id="rdVal">5</span><button id="rdPlus">+</button></div>
+    <div class="opt">Look speed <button id="sensMinus">&minus;</button><span id="sensVal">1.0</span><button id="sensPlus">+</button></div>
+    <div class="opt" id="autoJumpRow">Auto-jump <button id="btnAutoJump">On</button></div>
     <div class="opt"><button id="btnSaveQuit">Save &amp; Menu</button></div>
   </div>
 </div>
@@ -444,6 +466,10 @@ class Renderer {
 
     this.resize();
     window.addEventListener("resize", () => this.resize());
+    // Mobile browsers resize the visual viewport (URL bar collapse,
+    // orientation) without always firing a window resize.
+    if (window.visualViewport)
+      window.visualViewport.addEventListener("resize", () => this.resize());
     this.STRIDE = 7 * 4;
     this.cube = this.buildUnitCube();
     this.lineCube = this.buildLineCube();
@@ -1341,6 +1367,12 @@ class Player {
 
     moveEntity(this.world, this, this.vel[0] * dt, this.vel[1] * dt, this.vel[2] * dt);
 
+    // Touch auto-jump: hop reactively when walking into a block face,
+    // same trick the mobs use.
+    if (IS_TOUCH && Game.autoJump && this.hitWall && this.onGround &&
+        !this.flying && !crouched && !water && (mx !== 0 || mz !== 0))
+      this.vel[1] = 8.2;
+
     if (Game.mode === "survival" && this.landedFall > 12 && !water)
       this.damage(Math.ceil(this.landedFall - 12));
     if (this.landedFall > 4 && !water) Sound.blip(90, 0.08, 0.09);
@@ -1719,8 +1751,8 @@ const TouchCtl = {
         if (t.identifier !== this.lookId || !Game.player) continue;
         const dx = t.clientX - this.lookX, dy = t.clientY - this.lookY;
         this.lookX = t.clientX; this.lookY = t.clientY;
-        Game.player.yaw += dx * 0.0045;
-        Game.player.pitch -= dy * 0.0045;
+        Game.player.yaw += dx * 0.0045 * Game.sensitivity;
+        Game.player.pitch -= dy * 0.0045 * Game.sensitivity;
         Game.player.pitch = Math.max(-1.55, Math.min(1.55, Game.player.pitch));
         if (Math.hypot(t.clientX - this.tapX, t.clientY - this.tapY) > 12) this.tapMoved = true;
       }
@@ -1813,6 +1845,8 @@ const Game = {
   lastFwdPress: 0,
   sprintLatch: false,
   fov: 1.25,
+  sensitivity: 1,
+  autoJump: true,
 
   init() {
     UI.init();
@@ -1825,6 +1859,17 @@ const Game = {
     document.getElementById("btnRespawn").onclick = () => this.respawn();
     document.getElementById("rdMinus").onclick = () => this.setRenderRadius(this.RENDER_RADIUS - 1);
     document.getElementById("rdPlus").onclick = () => this.setRenderRadius(this.RENDER_RADIUS + 1);
+    this.setSensitivity(parseFloat(localStorage.getItem("wrld_sens")) || 1);
+    document.getElementById("sensMinus").onclick = () => this.setSensitivity(this.sensitivity - 0.2);
+    document.getElementById("sensPlus").onclick = () => this.setSensitivity(this.sensitivity + 0.2);
+    this.autoJump = localStorage.getItem("wrld_autojump") !== "0";
+    const ajBtn = document.getElementById("btnAutoJump");
+    ajBtn.textContent = this.autoJump ? "On" : "Off";
+    ajBtn.onclick = () => {
+      this.autoJump = !this.autoJump;
+      try { localStorage.setItem("wrld_autojump", this.autoJump ? "1" : "0"); } catch (e) {}
+      ajBtn.textContent = this.autoJump ? "On" : "Off";
+    };
     document.getElementById("btnSaveQuit").onclick = () => this.quitToMenu();
     UI.el.loreSplash.onclick = () => {
       UI.hide("loreSplash");
@@ -1869,6 +1914,12 @@ const Game = {
   setRenderRadius(r) {
     this.RENDER_RADIUS = Math.max(3, Math.min(8, r));
     UI.el.rdVal.textContent = this.RENDER_RADIUS;
+  },
+
+  setSensitivity(v) {
+    this.sensitivity = Math.round(Math.max(0.4, Math.min(2.4, v)) * 10) / 10;
+    try { localStorage.setItem("wrld_sens", this.sensitivity); } catch (e) {}
+    document.getElementById("sensVal").textContent = this.sensitivity.toFixed(1);
   },
 
   updateContinue() {
@@ -2089,8 +2140,8 @@ const Game = {
 
     addEventListener("mousemove", e => {
       if (document.pointerLockElement !== this.renderer.canvas || !this.player) return;
-      this.player.yaw += e.movementX * 0.0022;
-      this.player.pitch -= e.movementY * 0.0022;
+      this.player.yaw += e.movementX * 0.0022 * this.sensitivity;
+      this.player.pitch -= e.movementY * 0.0022 * this.sensitivity;
       this.player.pitch = Math.max(-1.55, Math.min(1.55, this.player.pitch));
     });
 
