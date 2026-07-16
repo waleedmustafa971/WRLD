@@ -306,9 +306,9 @@ function aabbInFrustum(planes, minx, miny, minz, maxx, maxy, maxz) {
  * self-contained file with zero network dependencies.
  */
 const Atlas = (() => {
-  const TILE = 16, GRID = 4;
+  const TILE = 16, COLS = 8, ROWS = 4;
   const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = TILE * GRID;
+  canvas.width = TILE * COLS; canvas.height = TILE * ROWS;
   const ctx = canvas.getContext("2d");
   const rng = mulberry32(0xC0FFEE);
   const jitter = (v, amt) => Math.max(0, Math.min(255, v + (rng() * 2 - 1) * amt)) | 0;
@@ -321,7 +321,7 @@ const Atlas = (() => {
         const i = (y * TILE + x) * 4;
         img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b; img.data[i + 3] = 255;
       }
-    ctx.putImageData(img, (index % GRID) * TILE, ((index / GRID) | 0) * TILE);
+    ctx.putImageData(img, (index % COLS) * TILE, ((index / COLS) | 0) * TILE);
   }
 
   tile(0, () => [jitter(88, 18), jitter(150, 18), jitter(60, 14)]);
@@ -349,17 +349,18 @@ const Atlas = (() => {
     const glow = Math.max(0, 1 - Math.hypot(x - 8, y - 8) / 9);
     return [jitter(95 + 160 * glow, 10), jitter(62 + 128 * glow, 10), jitter(36 + 70 * glow, 8)];
   });
+  tile(16, () => { const v = jitter(230, 10); return [v, v, Math.min(255, v + 8)]; });
 
   // Average color per tile, used to tint break particles.
   const tileAvg = [];
   {
-    const data = ctx.getImageData(0, 0, TILE * GRID, TILE * GRID).data;
-    for (let t = 0; t < GRID * GRID; t++) {
+    const data = ctx.getImageData(0, 0, TILE * COLS, TILE * ROWS).data;
+    for (let t = 0; t < COLS * ROWS; t++) {
       let r = 0, g = 0, b = 0;
-      const bx = (t % GRID) * TILE, by = ((t / GRID) | 0) * TILE;
+      const bx = (t % COLS) * TILE, by = ((t / COLS) | 0) * TILE;
       for (let y = 0; y < TILE; y++)
         for (let x = 0; x < TILE; x++) {
-          const i = ((by + y) * TILE * GRID + bx + x) * 4;
+          const i = ((by + y) * TILE * COLS + bx + x) * 4;
           r += data[i]; g += data[i + 1]; b += data[i + 2];
         }
       const n = TILE * TILE * 255;
@@ -367,7 +368,7 @@ const Atlas = (() => {
     }
   }
 
-  return { canvas, TILE, GRID, tileAvg };
+  return { canvas, TILE, COLS, tileAvg };
 })();
 
 /**
@@ -405,7 +406,7 @@ class Renderer {
       varying vec3 vPos;
       void main() {
         vec2 local = clamp(fract(vUV), 1.0 / 32.0, 31.0 / 32.0);
-        vec2 uv = (vec2(mod(vTile, 4.0), floor(vTile / 4.0)) + local) * 0.25;
+        vec2 uv = (vec2(mod(vTile, 8.0), floor(vTile / 8.0)) + local) * vec2(0.125, 0.25);
         vec3 col = uColorMode > 0.5 ? uColor : texture2D(uTex, uv).rgb;
         // Lantern point lights: linear falloff over ~9 blocks, clamped so
         // torchlight fills up to daylight level without overbrightening.
@@ -415,7 +416,7 @@ class Renderer {
           torch += max(0.0, 1.0 - length(vPos - uLights[i]) * 0.11);
         }
         float lum = vLight * min(1.05, uAmbient + torch * 0.9);
-        if (uColorMode < 0.5 && vTile > 14.5) lum = 1.0;
+        if (uColorMode < 0.5 && vTile > 14.5 && vTile < 15.5) lum = 1.0;
         col *= lum;
         col += vec3(0.05, 0.025, 0.0) * min(1.0, torch);
         float f = clamp(vDist / uFogDist, 0.0, 1.0); f *= f;
@@ -734,7 +735,7 @@ class Perlin {
 const B = {
   AIR: 0, GRASS: 1, DIRT: 2, STONE: 3, WOOD: 4, LEAVES: 5, SAND: 6,
   WATER: 7, PLANKS: 8, COBBLE: 9, BEDROCK: 10, GRAVEL: 11, SLIME: 12, ECHO: 13,
-  LANTERN: 14
+  LANTERN: 14, SNOW: 15
 };
 
 /** tiles: [top, side, bottom] atlas indices. hard: survival break time in
@@ -755,12 +756,14 @@ BLOCKS[B.GRAVEL]  = { name: "Gravel", tiles: [12, 12, 12], solid: true, gravity:
 BLOCKS[B.SLIME]   = { name: "Slime", tiles: [13, 13, 13], solid: true, bouncy: true, hard: 0.3 };
 BLOCKS[B.ECHO]    = { name: "Echo", tiles: [14, 14, 14], solid: true, drop: 0, echo: true, hard: 1.2 };
 BLOCKS[B.LANTERN] = { name: "Lantern", tiles: [15, 15, 15], solid: true, hard: 0.4 };
+// Snow drops dirt like grass does, keeping survival drops hotbar-visible.
+BLOCKS[B.SNOW]    = { name: "Snow", tiles: [16, 16, 16], solid: true, drop: B.DIRT, hard: 0.45 };
 
 /** Footstep pitch per surface material. */
 const STEP_FREQ = {
   [B.GRASS]: 165, [B.DIRT]: 158, [B.SAND]: 140, [B.STONE]: 255, [B.COBBLE]: 250,
   [B.WOOD]: 215, [B.PLANKS]: 212, [B.GRAVEL]: 180, [B.SLIME]: 120, [B.LEAVES]: 190,
-  [B.ECHO]: 230, [B.BEDROCK]: 260, [B.LANTERN]: 240
+  [B.ECHO]: 230, [B.BEDROCK]: 260, [B.LANTERN]: 240, [B.SNOW]: 150
 };
 
 /** Mining-speed multiplier on stony blocks per pick tier (none/wood/stone). */
@@ -815,6 +818,7 @@ class World {
     this.noise = new Perlin(seed);
     this.caveNoise = new Perlin(seed ^ 0xCAFE);
     this.oreNoise = new Perlin(seed ^ 0x0BE5);
+    this.biomeNoise = new Perlin(seed ^ 0xB10E);
     this.chunks = new Map();
     this.updateQueue = new Set();
     this.waterLevels = new Map();
@@ -895,12 +899,15 @@ class World {
         let height = Math.round(28 + continental * 16 + detail * 3);
         height = Math.max(3, Math.min(CHUNK_Y - 8, height));
         const beach = height <= SEA_LEVEL + 1;
+        // Broad biome channel: deserts get sand surfaces, cold zones snow.
+        const biome = this.biomeNoise.fbm2(wx * 0.0045, wz * 0.0045, 3);
+        const desert = biome < -0.24, snowy = biome > 0.19;
 
         for (let y = 0; y <= height; y++) {
           let block;
           if (y === 0) block = B.BEDROCK;
-          else if (y > height - 4 && beach) block = B.SAND;
-          else if (y === height) block = B.GRASS;
+          else if (y > height - 4 && (beach || desert)) block = B.SAND;
+          else if (y === height) block = snowy ? B.SNOW : B.GRASS;
           else if (y > height - 4) block = B.DIRT;
           else {
             block = B.STONE;
@@ -926,11 +933,15 @@ class World {
     for (let lx = 2; lx < 14; lx++) {
       for (let lz = 2; lz < 14; lz++) {
         const wx = ox + lx, wz = oz + lz;
-        if (posRand(wx, 777, wz) >= 0.018) continue;
+        const biome = this.biomeNoise.fbm2(wx * 0.0045, wz * 0.0045, 3);
+        if (biome < -0.24) continue; // deserts are treeless
+        if (posRand(wx, 777, wz) >= 0.018 * (biome > 0.19 ? 0.55 : 1)) continue;
         let top = -1;
         for (let y = CHUNK_Y - 1; y >= 0; y--)
           if (chunk.get(lx, y, lz) !== B.AIR) { top = y; break; }
-        if (top < 0 || chunk.get(lx, top, lz) !== B.GRASS) continue;
+        if (top < 0) continue;
+        const surf = chunk.get(lx, top, lz);
+        if (surf !== B.GRASS && surf !== B.SNOW) continue;
         const h = 4 + ((posRand(wx, 778, wz) * 2) | 0);
         if (top + h + 2 >= CHUNK_Y) continue;
         for (let y = 1; y <= h; y++) chunk.set(lx, top + y, lz, B.WOOD);
@@ -1159,6 +1170,29 @@ function buildStarField(seed) {
       [cx - tx * s + ux * s, cy + uy * s, cz - tz * s + uz * s]
     ];
     for (const iv of [0, 1, 2, 0, 2, 3]) arr.push(V[iv][0], V[iv][1], V[iv][2], 0, 0, 15, 1);
+  }
+  return new Float32Array(arr);
+}
+
+/** Seeded cloud layer: flat quads well above build height, tiled every
+ *  CLOUD_SPAN blocks so a single mesh covers an endless drifting sky. */
+const CLOUD_SPAN = 320;
+function buildCloudField(seed) {
+  const rng = mulberry32(seed ^ 0xC10D);
+  const arr = [];
+  for (let i = 0; i < 26; i++) {
+    const cx = rng() * CLOUD_SPAN, cz = rng() * CLOUD_SPAN;
+    const y = 74 + rng() * 8;
+    const puffs = 1 + ((rng() * 3) | 0);
+    for (let p = 0; p < puffs; p++) {
+      const px = cx + (rng() - 0.5) * 20, pz = cz + (rng() - 0.5) * 20;
+      const w = 7 + rng() * 12, h = 5 + rng() * 9;
+      const V = [
+        [px - w, y, pz - h], [px + w, y, pz - h],
+        [px + w, y, pz + h], [px - w, y, pz + h]
+      ];
+      for (const iv of [0, 1, 2, 0, 2, 3]) arr.push(V[iv][0], V[iv][1], V[iv][2], 0, 0, 15, 1);
+    }
   }
   return new Float32Array(arr);
 }
@@ -1404,7 +1438,10 @@ class Player {
     if (this.hurtCooldown > 0) this.hurtCooldown -= dt;
     if (Game.mode === "survival" && this.hp < 20) {
       this.regenTimer += dt;
-      const need = Game.echoBlessing > 0 ? 2 : 5;
+      // Completing the World Echo makes the hastened regen permanent.
+      const blessed = Game.echoBlessing > 0 ||
+        (Game.world && Game.echoesFound >= Game.world.echo.fragments.length);
+      const need = blessed ? 2 : 5;
       if (this.regenTimer > need) { this.hp = Math.min(20, this.hp + 1); this.regenTimer = 0; }
     }
 
@@ -1578,7 +1615,7 @@ const UI = {
       const ctx = cv.getContext("2d");
       ctx.imageSmoothingEnabled = false;
       const tileIdx = BLOCKS[player.hotbar[i]].tiles[1];
-      ctx.drawImage(Atlas.canvas, (tileIdx % 4) * 16, ((tileIdx / 4) | 0) * 16, 16, 16, 0, 0, 16, 16);
+      ctx.drawImage(Atlas.canvas, (tileIdx % Atlas.COLS) * 16, ((tileIdx / Atlas.COLS) | 0) * 16, 16, 16, 0, 0, 16, 16);
       const cnt = document.createElement("div");
       cnt.className = "cnt";
       slot.appendChild(cv);
@@ -1614,7 +1651,8 @@ const UI = {
       `FPS ${fps} &middot; ${Game.mode.toUpperCase()}${player.flying ? " (fly)" : ""}${pick}<br>` +
       `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")} &middot; ` +
       `XYZ ${player.pos.map(v => v.toFixed(0)).join(" / ")}<br>` +
-      `Echoes found: ${Game.echoesFound}`;
+      `Echoes: ${Math.min(Game.echoesFound, world.echo.fragments.length)} / ${world.echo.fragments.length}` +
+      (Game.echoesFound >= world.echo.fragments.length ? " ✦" : "");
     if (Game.mode === "survival") {
       const full = Math.ceil(player.hp / 2);
       this.el.hearts.innerHTML =
@@ -1841,6 +1879,8 @@ const Game = {
   saveTimer: 0,
   seedStr: "",
   starMesh: null,
+  cloudMesh: null,
+  elapsed: 0,
   touchActive: false,
   lastFwdPress: 0,
   sprintLatch: false,
@@ -2026,6 +2066,8 @@ const Game = {
 
     if (this.starMesh) this.renderer.deleteMesh(this.starMesh);
     this.starMesh = this.renderer.createMesh(buildStarField(seed));
+    if (this.cloudMesh) this.renderer.deleteMesh(this.cloudMesh);
+    this.cloudMesh = this.renderer.createMesh(buildCloudField(seed));
 
     document.getElementById("btnFlyT").style.display = (IS_TOUCH && this.mode === "creative") ? "flex" : "none";
 
@@ -2264,12 +2306,24 @@ const Game = {
       if (this.echoesFound === this.world.echo.fragments.length) {
         Sound.grandMelody();
         this.echoBlessing = 30;
-        setTimeout(() => UI.toast("The echoes align. The land forgives you.", 8000), 4500);
+        this.buildShrine(hit.x, hit.y, hit.z);
+        setTimeout(() => UI.toast("The echoes align. A shrine rises where the last voice slept, and the land's mercy stays with you.", 9000), 4500);
       }
     } else if (this.mode === "survival") {
       const drop = def.drop !== undefined ? def.drop : hit.block;
       if (drop) { this.player.addItem(drop); UI.updateHotbar(this.player); }
     }
+  },
+
+  /** The land answers the completed echo: a cobble dais with a two-lantern
+   *  beacon, built where the final fragment slept. Persists via edits. */
+  buildShrine(x, y, z) {
+    if (y - 1 >= 1)
+      for (let dx = -1; dx <= 1; dx++)
+        for (let dz = -1; dz <= 1; dz++)
+          this.world.setBlock(x + dx, y - 1, z + dz, B.COBBLE);
+    this.world.setBlock(x, y, z, B.LANTERN);
+    this.world.setBlock(x, y + 1, z, B.LANTERN);
   },
 
   spawnBlockParticles(x, y, z, col) {
@@ -2469,6 +2523,7 @@ const Game = {
     this.updateParticles(dt);
     if (this.echoBlessing > 0) this.echoBlessing -= dt;
 
+    this.elapsed += dt;
     this.timeOfDay = (this.timeOfDay + dt / this.DAY_LENGTH) % 1;
     this.tickAccum += dt;
     while (this.tickAccum >= 0.1) {
@@ -2611,6 +2666,26 @@ const Game = {
 
     for (const p of this.particles)
       this.renderer.drawColoredCube(pv, Mat4.trs(p.pos[0], p.pos[1], p.pos[2], 0, 0.1, 0.1, 0.1), p.col);
+
+    // Drifting cloud layer: the seeded tile drawn 3x3 around the camera so
+    // coverage is seamless in every direction; ambient dims it at night.
+    if (!underwater && this.cloudMesh) {
+      gl.depthMask(false);
+      gl.uniform1f(uni.uColorMode, 1);
+      gl.uniform3fv(uni.uColor, [1, 1, 1]);
+      gl.uniform1f(uni.uAlpha, 0.3);
+      const drift = this.elapsed * 1.4;
+      const ci = Math.floor((eye[0] - drift) / CLOUD_SPAN);
+      const cj = Math.floor(eye[2] / CLOUD_SPAN);
+      for (let i = ci - 1; i <= ci + 1; i++)
+        for (let j = cj - 1; j <= cj + 1; j++) {
+          gl.uniformMatrix4fv(uni.uPV, false, Mat4.multiply(pv, Mat4.trs(i * CLOUD_SPAN + drift, 0, j * CLOUD_SPAN, 0, 1, 1, 1)));
+          this.renderer.drawMesh(this.cloudMesh);
+        }
+      gl.uniform1f(uni.uColorMode, 0);
+      gl.uniform1f(uni.uAlpha, 1);
+      gl.depthMask(true);
+    }
 
     gl.uniformMatrix4fv(uni.uPV, false, pv);
 
