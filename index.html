@@ -19,10 +19,14 @@
   body { height: 100dvh; }
   #glcanvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
-  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; background: radial-gradient(ellipse at 50% 30%, #16202e 0%, var(--void) 70%); z-index: 20; }
+  /* Translucent so the live 3D scene (menu starfield / paused world)
+     stays visible behind every overlay. */
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; background: radial-gradient(ellipse at 50% 30%, rgba(22,32,46,0.72) 0%, rgba(11,14,20,0.82) 70%); z-index: 20; }
   .hidden { display: none !important; }
 
-  #menu h1 { font-size: 72px; letter-spacing: 0.35em; font-weight: 400; margin-bottom: 4px; text-shadow: 0 0 24px rgba(217,164,65,0.35); }
+  #menu { overflow-y: auto; justify-content: safe center; padding: 28px 0; }
+  #menu h1 { font-size: 72px; letter-spacing: 0.35em; font-weight: 400; margin-bottom: 4px; text-shadow: 0 0 24px rgba(217,164,65,0.35); animation: titleGlow 5s ease-in-out infinite; }
+  @keyframes titleGlow { 0%, 100% { text-shadow: 0 0 24px rgba(217,164,65,0.35); } 50% { text-shadow: 0 0 44px rgba(217,164,65,0.6); } }
   #menu h1 span { color: var(--amber); }
   #menu .tag { color: var(--dim); letter-spacing: 0.2em; font-size: 12px; margin-bottom: 14px; text-transform: uppercase; }
   #greet { color: var(--amber); font-size: 13px; letter-spacing: 0.12em; margin-bottom: 28px; min-height: 17px; }
@@ -32,6 +36,20 @@
   #namePrompt input { width: 100%; background: rgba(0,0,0,0.4); border: 1px solid var(--edge); color: var(--ink); padding: 10px 12px; font-family: inherit; font-size: 14px; outline: none; margin-bottom: 18px; }
   #namePrompt input:focus { border-color: var(--amber); }
   #namePrompt .row { display: flex; gap: 12px; justify-content: center; }
+  #avatarWrap { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 22px; }
+  #avatarBox { width: 150px; height: 185px; border: 1px solid var(--edge); background: rgba(0,0,0,0.2); }
+  #avatarBtns { display: flex; gap: 10px; }
+  .avbtn { padding: 8px 18px; font-size: 11px; }
+  .avbtn.sel { border-color: var(--amber); color: var(--amber); background: rgba(217,164,65,0.08); }
+  @media (max-height: 640px) {
+    #menu h1 { font-size: 44px; }
+    #menu .tag { margin-bottom: 8px; }
+    #greet { margin-bottom: 14px; }
+    #avatarWrap { margin-bottom: 12px; }
+    #avatarBox { width: 104px; height: 128px; }
+    .field { margin-bottom: 12px; }
+    .controls-hint { margin-top: 16px; }
+  }
   .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 24px; width: 320px; }
   .field label { font-size: 11px; letter-spacing: 0.18em; color: var(--dim); text-transform: uppercase; }
   .field input { background: rgba(0,0,0,0.4); border: 1px solid var(--edge); color: var(--ink); padding: 10px 12px; font-family: inherit; font-size: 14px; outline: none; }
@@ -157,6 +175,13 @@
   <h1>WR<span>L</span>D</h1>
   <div class="tag">every seed remembers</div>
   <div id="greet"></div>
+  <div id="avatarWrap">
+    <div id="avatarBox"></div>
+    <div id="avatarBtns">
+      <button id="avMale" class="avbtn">&#9794; male</button>
+      <button id="avFemale" class="avbtn">&#9792; female</button>
+    </div>
+  </div>
   <div class="field">
     <label for="nameInput">Traveler name</label>
     <input id="nameInput" type="text" name="name" placeholder="what should the world call you?" autocomplete="name">
@@ -1827,6 +1852,36 @@ const RECIPES = [
 ];
 
 /**
+ * Voxel traveler avatars for the menu turntable, built from the same unit
+ * cube the mobs use. Each part: [x, y, z, sx, sy, sz, r, g, b] with y at
+ * the part's base (the cube mesh grows upward from its origin).
+ */
+const AVATARS = {
+  male: [
+    [-0.14, 0.00,  0.00, 0.22, 0.85, 0.22, 0.25, 0.28, 0.34], // legs
+    [ 0.14, 0.00,  0.00, 0.22, 0.85, 0.22, 0.25, 0.28, 0.34],
+    [ 0.00, 0.85,  0.00, 0.56, 0.72, 0.30, 0.33, 0.44, 0.58], // tunic
+    [-0.38, 0.88,  0.00, 0.16, 0.66, 0.16, 0.33, 0.44, 0.58], // arms
+    [ 0.38, 0.88,  0.00, 0.16, 0.66, 0.16, 0.33, 0.44, 0.58],
+    [-0.38, 0.78,  0.00, 0.15, 0.11, 0.15, 0.85, 0.69, 0.54], // hands
+    [ 0.38, 0.78,  0.00, 0.15, 0.11, 0.15, 0.85, 0.69, 0.54],
+    [ 0.00, 1.57,  0.00, 0.42, 0.42, 0.42, 0.85, 0.69, 0.54], // head
+    [ 0.00, 1.87,  0.00, 0.46, 0.14, 0.46, 0.22, 0.16, 0.12]  // hair
+  ],
+  female: [
+    [-0.11, 0.00,  0.00, 0.17, 0.60, 0.17, 0.82, 0.66, 0.52], // legs
+    [ 0.11, 0.00,  0.00, 0.17, 0.60, 0.17, 0.82, 0.66, 0.52],
+    [ 0.00, 0.55,  0.00, 0.62, 0.40, 0.42, 0.58, 0.30, 0.38], // skirt
+    [ 0.00, 0.92,  0.00, 0.44, 0.62, 0.26, 0.58, 0.30, 0.38], // dress
+    [-0.33, 0.92,  0.00, 0.13, 0.58, 0.13, 0.82, 0.66, 0.52], // arms
+    [ 0.33, 0.92,  0.00, 0.13, 0.58, 0.13, 0.82, 0.66, 0.52],
+    [ 0.00, 1.56,  0.00, 0.40, 0.40, 0.40, 0.85, 0.69, 0.54], // head
+    [ 0.00, 1.28, -0.15, 0.44, 0.58, 0.16, 0.32, 0.21, 0.13], // hair back
+    [ 0.00, 1.85,  0.00, 0.44, 0.14, 0.44, 0.32, 0.21, 0.13]  // hair top
+  ]
+};
+
+/**
  * Touch control scheme (coarse-pointer devices): left-thumb analog joystick
  * to move, drag anywhere else to look, tap to place, long-press to mine
  * (feeding the same held-mouse pipeline as desktop), plus on-screen buttons
@@ -1987,6 +2042,8 @@ const Game = {
   seedStr: "",
   starMesh: null,
   cloudMesh: null,
+  menuStars: null,
+  avatar: "male",
   elapsed: 0,
   touchActive: false,
   lastFwdPress: 0,
@@ -1999,6 +2056,17 @@ const Game = {
     UI.init();
     Greet.init();
     this.renderer = new Renderer(document.getElementById("glcanvas"));
+    this.menuStars = this.renderer.createMesh(buildStarField(hashSeed("menu-sky")));
+    const avM = document.getElementById("avMale"), avF = document.getElementById("avFemale");
+    const setAvatar = v => {
+      this.avatar = v;
+      try { localStorage.setItem("wrld_avatar", v); } catch (e) {}
+      avM.classList.toggle("sel", v === "male");
+      avF.classList.toggle("sel", v === "female");
+    };
+    avM.onclick = () => setAvatar("male");
+    avF.onclick = () => setAvatar("female");
+    setAvatar(localStorage.getItem("wrld_avatar") || "male");
     this.bindInput();
     document.getElementById("btnSurvival").onclick = () => this.startWorld("survival");
     document.getElementById("btnCreative").onclick = () => this.startWorld("creative");
@@ -2644,9 +2712,56 @@ const Game = {
     if (this.saveTimer > 12) { this.saveTimer = 0; this.saveWorld(); }
   },
 
+  /** Menu backdrop: slow-panning starfield plus the chosen voxel traveler
+   *  spinning inside #avatarBox (drawn on the main canvas, viewport-mapped
+   *  to the box; the translucent menu overlay tints it). */
+  renderMenu() {
+    const gl = this.renderer.gl;
+    const uni = this.renderer.uni;
+    const t = performance.now() / 1000;
+    gl.clearColor(0.043, 0.055, 0.078, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    gl.uniform1f(uni.uAmbient, 1);
+    gl.uniform1f(uni.uLightCount, 0);
+    gl.uniform3fv(uni.uFog, [0.043, 0.055, 0.078]);
+    gl.uniform1f(uni.uFogDist, 1e5);
+    const pv = Mat4.multiply(
+      Mat4.perspective(1.1, this.renderer.aspect, 0.1, 800),
+      Mat4.fpsView([0, 0, 0], t * 0.01, 0.1));
+    gl.uniform1f(uni.uColorMode, 1);
+    gl.uniform3fv(uni.uColor, [0.9, 0.92, 1]);
+    gl.uniform1f(uni.uAlpha, 0.9);
+    gl.uniformMatrix4fv(uni.uPV, false, pv);
+    this.renderer.drawMesh(this.menuStars);
+    gl.uniform1f(uni.uColorMode, 0);
+    gl.uniform1f(uni.uAlpha, 1);
+
+    const box = document.getElementById("avatarBox");
+    const r = box.getBoundingClientRect();
+    if (r.width < 10 || r.height < 10) return;
+    const dpr = this.renderer.canvas.width / innerWidth;
+    const vw = r.width * dpr, vh = r.height * dpr;
+    const vy = this.renderer.canvas.height - r.bottom * dpr;
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.viewport(r.left * dpr, vy, vw, vh);
+    const apv = Mat4.multiply(
+      Mat4.perspective(0.9, vw / vh, 0.1, 50),
+      Mat4.fpsView([0, 1.05, 2.9], 0, -0.05));
+    const spin = t * 0.7, bob = Math.sin(t * 1.7) * 0.02;
+    const c = Math.cos(spin), s = Math.sin(spin);
+    for (const p of AVATARS[this.avatar] || AVATARS.male) {
+      const px = p[0] * c + p[2] * s, pz = -p[0] * s + p[2] * c;
+      this.renderer.drawColoredCube(apv,
+        Mat4.trs(px, p[1] + bob, pz, spin, p[3], p[4], p[5]), [p[6], p[7], p[8]]);
+    }
+    gl.viewport(0, 0, this.renderer.canvas.width, this.renderer.canvas.height);
+  },
+
   render() {
     const gl = this.renderer.gl;
     const uni = this.renderer.uni;
+    if (!this.player) { this.renderMenu(); return; }
     const dayFactor = Math.max(0, Math.sin(this.timeOfDay * Math.PI * 2));
     let ambient = 0.28 + 0.72 * dayFactor;
     let sky = [
