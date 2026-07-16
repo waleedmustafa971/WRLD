@@ -139,8 +139,8 @@
     <button id="btnContinue" class="hidden">Continue last world</button>
   </div>
   <div class="controls-hint">
-    WASD move &middot; Space jump &middot; Shift sneak &middot; hold LMB mine &middot; RMB place<br>
-    1&ndash;9 hotbar &middot; C craft &middot; F fly (creative) &middot; L world echo &middot; Esc pause
+    WASD move &middot; Ctrl / 2&times;W sprint &middot; Space jump &middot; Shift sneak &middot; hold LMB mine &middot; RMB place<br>
+    1&ndash;9 or wheel hotbar &middot; C craft &middot; F fly (creative) &middot; L world echo &middot; Esc pause
   </div>
 </div>
 
@@ -1212,6 +1212,7 @@ class Player {
     this.stepAccum = 0;
     this.walkCycle = 0;
     this.bob = 0;
+    this.sprinting = false;
   }
 
   eye() { return [this.pos[0], this.pos[1] + (this.hh < 1.8 ? 1.32 : 1.62) + this.bob, this.pos[2]]; }
@@ -1243,7 +1244,9 @@ class Player {
     } else this.hh = 1.8;
 
     const crouched = this.hh < 1.8;
-    const speed = this.flying ? 11 : crouched ? 1.6 : 4.3;
+    this.sprinting = !this.flying && !crouched && input.fwd &&
+      (input.sprint || Game.sprintLatch) && !this.inWater();
+    const speed = this.flying ? 11 : crouched ? 1.6 : this.sprinting ? 5.6 : 4.3;
     let mx = 0, mz = 0;
     if (input.fwd) mz += 1;
     if (input.back) mz -= 1;
@@ -1681,7 +1684,7 @@ const TouchCtl = {
           Game.mouse.left = false;
           Game.resetBreaking();
         } else if (!this.tapMoved && performance.now() - this.tapT < 260 && Game.isLive()) {
-          Game.actionPlace();
+          Game.tapAction();
         }
       }
     };
@@ -1734,7 +1737,7 @@ const Game = {
   arrows: [],
   particles: [],
   renderer: null,
-  input: { fwd: false, back: false, left: false, right: false, jump: false, sneak: false },
+  input: { fwd: false, back: false, left: false, right: false, jump: false, sneak: false, sprint: false },
   mouse: { left: false, right: false },
   timeOfDay: 0.3,
   DAY_LENGTH: 240,
@@ -1756,6 +1759,9 @@ const Game = {
   seedStr: "",
   starMesh: null,
   touchActive: false,
+  lastFwdPress: 0,
+  sprintLatch: false,
+  fov: 1.25,
 
   init() {
     UI.init();
@@ -1969,9 +1975,15 @@ const Game = {
   },
 
   bindInput() {
-    const map = { KeyW: "fwd", KeyS: "back", KeyA: "left", KeyD: "right", Space: "jump", ShiftLeft: "sneak", ShiftRight: "sneak" };
+    const map = { KeyW: "fwd", KeyS: "back", KeyA: "left", KeyD: "right", Space: "jump", ShiftLeft: "sneak", ShiftRight: "sneak", ControlLeft: "sprint", ControlRight: "sprint" };
     addEventListener("keydown", e => {
       if (map[e.code] !== undefined) { this.input[map[e.code]] = true; e.preventDefault(); }
+      // Double-tap W latches sprint until W is released.
+      if (e.code === "KeyW" && !e.repeat) {
+        const now = performance.now();
+        if (now - this.lastFwdPress < 280) this.sprintLatch = true;
+        this.lastFwdPress = now;
+      }
       if (this.state !== "playing" || !this.player) return;
       if (e.code.startsWith("Digit")) {
         const n = +e.code.slice(5);
@@ -1982,7 +1994,17 @@ const Game = {
       if (e.code === "KeyL") UI.toggleLore();
       if (e.code === "KeyC") this.toggleCraft();
     });
-    addEventListener("keyup", e => { if (map[e.code] !== undefined) this.input[map[e.code]] = false; });
+    addEventListener("keyup", e => {
+      if (map[e.code] !== undefined) this.input[map[e.code]] = false;
+      if (e.code === "KeyW") this.sprintLatch = false;
+    });
+
+    addEventListener("wheel", e => {
+      if (!this.isLive()) return;
+      const d = e.deltaY > 0 ? 1 : -1;
+      this.player.selected = (this.player.selected + d + 9) % 9;
+      UI.updateHotbar(this.player);
+    }, { passive: true });
 
     document.addEventListener("pointerlockchange", () => {
       const locked = document.pointerLockElement === this.renderer.canvas;
@@ -2182,6 +2204,21 @@ const Game = {
     }
   },
 
+  /** Touch tap: swing at a mob if one is in the aim cone, otherwise place. */
+  tapAction() {
+    if (this.attackCooldown <= 0) {
+      const dir = this.player.lookDir();
+      const m = this.pickMob(this.player.eye(), dir);
+      if (m) {
+        m.hurt(6, dir[0] * 4, dir[2] * 4);
+        this.attackCooldown = 0.4;
+        if (navigator.vibrate) navigator.vibrate(12);
+        return;
+      }
+    }
+    this.actionPlace();
+  },
+
   actionPlace() {
     const eye = this.player.eye();
     const dir = this.player.lookDir();
@@ -2342,7 +2379,7 @@ const Game = {
     if (!this.player) return;
 
     const eye = this.player.eye();
-    const proj = Mat4.perspective(1.25, this.renderer.aspect, 0.1, 400);
+    const proj = Mat4.perspective(this.fov, this.renderer.aspect, 0.1, 400);
     const view = Mat4.fpsView(eye, this.player.yaw, this.player.pitch);
     const pv = Mat4.multiply(proj, view);
     const frustum = extractFrustum(pv);
@@ -2446,6 +2483,9 @@ const Game = {
     if (this.isLive()) {
       this.update(dt);
     }
+    // Sprint FOV kick, eased both ways.
+    const wantFov = 1.25 + (this.isLive() && this.player.sprinting ? 0.14 : 0);
+    this.fov += (wantFov - this.fov) * Math.min(1, dt * 10);
     this.render();
     if (this.player) UI.updateHUD(this.player, this.world, this.fps, this.timeOfDay);
     requestAnimationFrame(t => this.frame(t));
