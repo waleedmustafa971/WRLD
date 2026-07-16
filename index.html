@@ -46,6 +46,7 @@
   .slot canvas { width: 100%; height: 100%; image-rendering: pixelated; }
   .slot .cnt { position: absolute; right: 3px; bottom: 1px; font-size: 11px; color: #fff; text-shadow: 1px 1px 0 #000; }
   #hearts { position: absolute; bottom: 72px; left: 50%; transform: translateX(-50%); font-size: 16px; letter-spacing: 2px; text-shadow: 1px 1px 0 #000; }
+  #food { position: absolute; bottom: 70px; left: calc(50% + 108px); font-size: 14px; text-shadow: 1px 1px 0 #000; pointer-events: auto; cursor: pointer; user-select: none; -webkit-user-select: none; }
   #topline { position: absolute; top: 10px; left: 12px; font-size: 12px; color: var(--ink); text-shadow: 1px 1px 0 #000; line-height: 1.8; }
   #toast { position: absolute; top: 22%; left: 50%; transform: translateX(-50%); max-width: 520px; text-align: center; font-style: italic; font-size: 15px; color: #cbb8ff; text-shadow: 0 0 8px rgba(120,80,255,0.6), 1px 1px 0 #000; opacity: 0; transition: opacity .8s; }
 
@@ -99,6 +100,7 @@
   <div id="breakbar"><div></div></div>
   <div id="topline"></div>
   <div id="hearts"></div>
+  <div id="food"></div>
   <div id="air"></div>
   <div id="hotbar"></div>
   <div id="toast"></div>
@@ -140,7 +142,7 @@
   </div>
   <div class="controls-hint">
     WASD move &middot; Ctrl / 2&times;W sprint &middot; Space jump &middot; Shift sneak &middot; hold LMB mine &middot; RMB place<br>
-    1&ndash;9 or wheel hotbar &middot; C craft &middot; F fly (creative) &middot; L world echo &middot; Esc pause
+    1&ndash;9 or wheel hotbar &middot; E eat &middot; C craft &middot; F fly (creative) &middot; L world echo &middot; Esc pause
   </div>
 </div>
 
@@ -318,7 +320,13 @@ const Atlas = (() => {
   tile(12, () => { const v = jitter(112, 30); return [v, jitter(106, 26), jitter(100, 24)]; });
   tile(13, (x, y) => { const glow = Math.max(0, 26 - Math.hypot(x - 8, y - 8) * 3); return [jitter(84, 10), jitter(196 + glow, 12), jitter(108, 10)]; });
   tile(14, () => rng() < 0.09 ? [jitter(185, 20), jitter(150, 20), 255] : [jitter(40, 10), jitter(30, 8), jitter(72, 12)]);
-  tile(15, () => [255, 255, 255]);
+  // Tile 15 is only ever sampled by the lantern block — entity cubes that
+  // reference index 15 draw in flat-color mode and never touch the texture.
+  tile(15, (x, y) => {
+    if (x === 0 || x === 15 || y === 0 || y === 15) return [jitter(70, 8), jitter(50, 6), jitter(32, 6)];
+    const glow = Math.max(0, 1 - Math.hypot(x - 8, y - 8) / 9);
+    return [jitter(95 + 160 * glow, 10), jitter(62 + 128 * glow, 10), jitter(36 + 70 * glow, 8)];
+  });
 
   // Average color per tile, used to tint break particles.
   const tileAvg = [];
@@ -356,20 +364,38 @@ class Renderer {
       attribute vec3 aPos; attribute vec2 aUV; attribute float aTile; attribute float aLight;
       uniform mat4 uPV;
       varying vec2 vUV; varying float vTile; varying float vLight; varying float vDist;
+      varying vec3 vPos;
       void main() {
         gl_Position = uPV * vec4(aPos, 1.0);
         vUV = aUV; vTile = aTile; vLight = aLight; vDist = gl_Position.w;
+        vPos = aPos;
       }`;
     const FS = `
+      #ifdef GL_FRAGMENT_PRECISION_HIGH
+      precision highp float;
+      #else
       precision mediump float;
+      #endif
       uniform sampler2D uTex; uniform float uAmbient; uniform vec3 uFog;
       uniform float uFogDist; uniform float uAlpha; uniform float uColorMode; uniform vec3 uColor;
+      uniform vec3 uLights[8]; uniform float uLightCount;
       varying vec2 vUV; varying float vTile; varying float vLight; varying float vDist;
+      varying vec3 vPos;
       void main() {
         vec2 local = clamp(fract(vUV), 1.0 / 32.0, 31.0 / 32.0);
         vec2 uv = (vec2(mod(vTile, 4.0), floor(vTile / 4.0)) + local) * 0.25;
         vec3 col = uColorMode > 0.5 ? uColor : texture2D(uTex, uv).rgb;
-        col *= vLight * uAmbient;
+        // Lantern point lights: linear falloff over ~9 blocks, clamped so
+        // torchlight fills up to daylight level without overbrightening.
+        float torch = 0.0;
+        for (int i = 0; i < 8; i++) {
+          if (float(i) >= uLightCount) break;
+          torch += max(0.0, 1.0 - length(vPos - uLights[i]) * 0.11);
+        }
+        float lum = vLight * min(1.05, uAmbient + torch * 0.9);
+        if (uColorMode < 0.5 && vTile > 14.5) lum = 1.0;
+        col *= lum;
+        col += vec3(0.05, 0.025, 0.0) * min(1.0, torch);
         float f = clamp(vDist / uFogDist, 0.0, 1.0); f *= f;
         gl_FragColor = vec4(mix(col, uFog, f), uAlpha);
       }`;
@@ -395,8 +421,10 @@ class Renderer {
       light: gl.getAttribLocation(prog, "aLight")
     };
     this.uni = {};
-    for (const n of ["uPV", "uTex", "uAmbient", "uFog", "uFogDist", "uAlpha", "uColorMode", "uColor"])
+    for (const n of ["uPV", "uTex", "uAmbient", "uFog", "uFogDist", "uAlpha", "uColorMode", "uColor", "uLightCount"])
       this.uni[n] = gl.getUniformLocation(prog, n);
+    this.uni.uLights = gl.getUniformLocation(prog, "uLights[0]");
+    gl.uniform1f(this.uni.uLightCount, 0);
 
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -679,7 +707,8 @@ class Perlin {
 
 const B = {
   AIR: 0, GRASS: 1, DIRT: 2, STONE: 3, WOOD: 4, LEAVES: 5, SAND: 6,
-  WATER: 7, PLANKS: 8, COBBLE: 9, BEDROCK: 10, GRAVEL: 11, SLIME: 12, ECHO: 13
+  WATER: 7, PLANKS: 8, COBBLE: 9, BEDROCK: 10, GRAVEL: 11, SLIME: 12, ECHO: 13,
+  LANTERN: 14
 };
 
 /** tiles: [top, side, bottom] atlas indices. hard: survival break time in
@@ -699,16 +728,20 @@ BLOCKS[B.BEDROCK] = { name: "Bedrock", tiles: [11, 11, 11], solid: true, unbreak
 BLOCKS[B.GRAVEL]  = { name: "Gravel", tiles: [12, 12, 12], solid: true, gravity: true, hard: 0.5 };
 BLOCKS[B.SLIME]   = { name: "Slime", tiles: [13, 13, 13], solid: true, bouncy: true, hard: 0.3 };
 BLOCKS[B.ECHO]    = { name: "Echo", tiles: [14, 14, 14], solid: true, drop: 0, echo: true, hard: 1.2 };
+BLOCKS[B.LANTERN] = { name: "Lantern", tiles: [15, 15, 15], solid: true, hard: 0.4 };
 
 /** Footstep pitch per surface material. */
 const STEP_FREQ = {
   [B.GRASS]: 165, [B.DIRT]: 158, [B.SAND]: 140, [B.STONE]: 255, [B.COBBLE]: 250,
   [B.WOOD]: 215, [B.PLANKS]: 212, [B.GRAVEL]: 180, [B.SLIME]: 120, [B.LEAVES]: 190,
-  [B.ECHO]: 230, [B.BEDROCK]: 260
+  [B.ECHO]: 230, [B.BEDROCK]: 260, [B.LANTERN]: 240
 };
 
 /** Mining-speed multiplier on stony blocks per pick tier (none/wood/stone). */
 const PICK_SPEED = [1, 2.5, 5];
+
+/** Melee damage per sword tier (none/wood/stone). */
+const SWORD_DMG = [6, 9, 12];
 
 const isOpaque = id => id !== B.AIR && id !== B.WATER;
 const isSolid = id => id !== B.AIR && id !== B.WATER;
@@ -759,6 +792,8 @@ class World {
     this.chunks = new Map();
     this.updateQueue = new Set();
     this.waterLevels = new Map();
+    // Placed lantern positions ("x,y,z" -> [x,y,z]) feeding the point lights.
+    this.lanterns = new Map();
     this.echo = generateWorldEcho(seed);
     // Diffs from procedural generation ("x,y,z" -> block id). Terrain is
     // deterministic from the seed, so persisting only this map is a full save.
@@ -783,7 +818,10 @@ class World {
     const cx = x >> 4, cz = z >> 4;
     const c = this.chunks.get(this.key(cx, cz));
     if (!c) return;
+    const old = c.get(x & 15, y, z & 15);
     c.set(x & 15, y, z & 15, v);
+    if (old === B.LANTERN) this.lanterns.delete(x + "," + y + "," + z);
+    if (v === B.LANTERN) this.lanterns.set(x + "," + y + "," + z, [x, y, z]);
     c.dirty = true;
     this.edits.set(x + "," + y + "," + z, v);
     const lx = x & 15, lz = z & 15;
@@ -885,7 +923,10 @@ class World {
     if (this.edits.size) {
       for (const [k, v] of this.edits) {
         const [ex, ey, ez] = k.split(",").map(Number);
-        if ((ex >> 4) === cx && (ez >> 4) === cz) chunk.set(ex & 15, ey, ez & 15, v);
+        if ((ex >> 4) === cx && (ez >> 4) === cz) {
+          chunk.set(ex & 15, ey, ez & 15, v);
+          if (v === B.LANTERN) this.lanterns.set(k, [ex, ey, ez]);
+        }
       }
     }
 
@@ -1206,9 +1247,12 @@ class Player {
     this.hurtCooldown = 0;
     this.regenTimer = 0;
     this.selected = 0;
-    this.hotbar = [B.GRASS, B.DIRT, B.STONE, B.WOOD, B.GRAVEL, B.SAND, B.PLANKS, B.COBBLE, B.SLIME];
+    // Lantern sits where stone was: stone is never collectible in survival
+    // (it drops cobble), so that slot was dead there anyway.
+    this.hotbar = [B.GRASS, B.DIRT, B.LANTERN, B.WOOD, B.GRAVEL, B.SAND, B.PLANKS, B.COBBLE, B.SLIME];
     this.counts = {};
-    this.tools = { pick: 0 };
+    this.meat = 0;
+    this.tools = { pick: 0, sword: 0 };
     this.stepAccum = 0;
     this.walkCycle = 0;
     this.bob = 0;
@@ -1477,9 +1521,10 @@ const UI = {
   toastTimer: null,
 
   init() {
-    for (const id of ["hud", "menu", "loreSplash", "pause", "death", "hotbar", "hearts", "topline", "toast", "lorePanel", "loreText", "fragCount", "splashLore", "seedInput", "vignette", "breakbar", "air", "craft", "craftList", "rdVal"])
+    for (const id of ["hud", "menu", "loreSplash", "pause", "death", "hotbar", "hearts", "food", "topline", "toast", "lorePanel", "loreText", "fragCount", "splashLore", "seedInput", "vignette", "breakbar", "air", "craft", "craftList", "rdVal"])
       this.el[id] = document.getElementById(id);
     this.el.breakfill = this.el.breakbar.firstElementChild;
+    this.el.food.addEventListener("click", () => Game.eat());
     // Craft recipes are tappable (touch has no digit keys).
     this.el.craftList.addEventListener("click", e => {
       const row = e.target.closest(".recipe");
@@ -1530,7 +1575,9 @@ const UI = {
   updateHUD(player, world, fps, timeOfDay) {
     const hour = ((timeOfDay * 24 + 6) % 24) | 0;
     const min = ((timeOfDay * 24 * 60) % 60) | 0;
-    const pick = Game.mode === "survival" ? ` &middot; Pick: ${["none", "wood", "stone"][player.tools.pick]}` : "";
+    const pick = Game.mode === "survival"
+      ? ` &middot; Pick: ${["none", "wood", "stone"][player.tools.pick]} &middot; Sword: ${["none", "wood", "stone"][player.tools.sword || 0]}`
+      : "";
     this.el.topline.innerHTML =
       `FPS ${fps} &middot; ${Game.mode.toUpperCase()}${player.flying ? " (fly)" : ""}${pick}<br>` +
       `${String(hour).padStart(2, "0")}:${String(min).padStart(2, "0")} &middot; ` +
@@ -1545,7 +1592,8 @@ const UI = {
         const b = Math.max(0, Math.ceil(player.air / 1.2));
         this.el.air.textContent = "\u25cf".repeat(Math.min(10, b)) + "\u25cb".repeat(Math.max(0, 10 - b));
       } else this.el.air.textContent = "";
-    } else { this.el.hearts.innerHTML = ""; this.el.air.textContent = ""; }
+      this.el.food.textContent = player.meat > 0 ? "\u{1F356} " + player.meat : "";
+    } else { this.el.hearts.innerHTML = ""; this.el.air.textContent = ""; this.el.food.textContent = ""; }
   },
 
   setBreakProgress(f) {
@@ -1567,7 +1615,7 @@ const UI = {
       return `<div class="recipe ${ok ? "ok" : "no"}" data-i="${i}">[${i + 1}] ${r.label}<span>${cost}</span></div>`;
     }).join("");
     this.el.craftList.innerHTML = rows +
-      `<div class="frag">Current pick: ${["none", "wooden", "stone"][player.tools.pick]}</div>`;
+      `<div class="frag">Pick: ${["none", "wooden", "stone"][player.tools.pick]} &middot; Sword: ${["none", "wooden", "stone"][player.tools.sword || 0]}</div>`;
   },
 
   toast(text, ms = 4200) {
@@ -1595,7 +1643,10 @@ const UI = {
 const RECIPES = [
   { label: "1 Wood → 4 Planks", cost: [[B.WOOD, 1]], gives: { block: B.PLANKS, n: 4 } },
   { label: "3 Planks → Wooden Pick", cost: [[B.PLANKS, 3]], gives: { pick: 1 } },
-  { label: "3 Cobble → Stone Pick", cost: [[B.COBBLE, 3]], gives: { pick: 2 } }
+  { label: "3 Cobble → Stone Pick", cost: [[B.COBBLE, 3]], gives: { pick: 2 } },
+  { label: "2 Planks → Wooden Sword", cost: [[B.PLANKS, 2]], gives: { sword: 1 } },
+  { label: "2 Cobble → Stone Sword", cost: [[B.COBBLE, 2]], gives: { sword: 2 } },
+  { label: "1 Wood + 1 Cobble → 4 Lanterns", cost: [[B.WOOD, 1], [B.COBBLE, 1]], gives: { block: B.LANTERN, n: 4 } }
 ];
 
 /**
@@ -1786,7 +1837,7 @@ const Game = {
       this.setRenderRadius(4);
       document.querySelector(".controls-hint").innerHTML =
         "joystick move &middot; drag to look &middot; tap place &middot; hold to mine<br>" +
-        "&#9650; jump &middot; &#9660; sneak &middot; II pause &middot; &#9874; craft &middot; &#10022; echo";
+        "&#9650; jump &middot; &#9660; sneak &middot; tap &#127830; eat &middot; II pause &middot; &#9874; craft &middot; &#10022; echo";
     }
     this.updateContinue();
     requestAnimationFrame(t => this.frame(t));
@@ -1832,7 +1883,8 @@ const Game = {
     const data = {
       seedStr: this.seedStr, mode: this.mode, timeOfDay: this.timeOfDay,
       echoesFound: this.echoesFound, edits: [...this.world.edits],
-      player: { pos: p.pos, hp: p.hp, air: p.air, counts: p.counts, selected: p.selected, tools: p.tools, flying: p.flying }
+      mobs: this.mobs.slice(0, 24).map(m => ({ t: m.type, p: m.pos.slice(), hp: m.hp })),
+      player: { pos: p.pos, hp: p.hp, air: p.air, meat: p.meat, counts: p.counts, selected: p.selected, tools: p.tools, flying: p.flying }
     };
     try {
       localStorage.setItem("wrld_save_" + this.seedStr, JSON.stringify(data));
@@ -1900,12 +1952,25 @@ const Game = {
       this.player.counts = sp.counts || {};
       this.player.selected = sp.selected || 0;
       this.player.tools = sp.tools || { pick: 0 };
+      if (!this.player.tools.sword) this.player.tools.sword = 0;
+      this.player.meat = sp.meat || 0;
       this.player.flying = !!sp.flying && this.mode === "creative";
       const pcx = Math.floor(sp.pos[0]) >> 4, pcz = Math.floor(sp.pos[2]) >> 4;
       for (let cx = pcx - 1; cx <= pcx + 1; cx++)
         for (let cz = pcz - 1; cz <= pcz + 1; cz++)
           this.world.generateChunk(cx, cz);
     }
+    // Restore saved mobs; ones in not-yet-generated chunks idle until their
+    // chunk streams in (unloaded space reads as solid).
+    if (save && Array.isArray(save.mobs)) {
+      for (const s of save.mobs) {
+        if (!MOB_TYPES[s.t] || !Array.isArray(s.p)) continue;
+        const m = new Mob(this.world, s.t, s.p[0], s.p[1], s.p[2]);
+        m.hp = s.hp || m.hp;
+        this.mobs.push(m);
+      }
+    }
+
     if (this.mode === "creative") for (const id of this.player.hotbar) this.player.counts[id] = 999;
 
     if (this.starMesh) this.renderer.deleteMesh(this.starMesh);
@@ -1977,6 +2042,8 @@ const Game = {
   bindInput() {
     const map = { KeyW: "fwd", KeyS: "back", KeyA: "left", KeyD: "right", Space: "jump", ShiftLeft: "sneak", ShiftRight: "sneak", ControlLeft: "sprint", ControlRight: "sprint" };
     addEventListener("keydown", e => {
+      // Don't swallow typing in text fields (e.g. the seed input).
+      if (e.target && e.target.tagName === "INPUT") return;
       if (map[e.code] !== undefined) { this.input[map[e.code]] = true; e.preventDefault(); }
       // Double-tap W latches sprint until W is released.
       if (e.code === "KeyW" && !e.repeat) {
@@ -1993,6 +2060,7 @@ const Game = {
       if (e.code === "KeyF" && this.mode === "creative") this.player.flying = !this.player.flying;
       if (e.code === "KeyL") UI.toggleLore();
       if (e.code === "KeyC") this.toggleCraft();
+      if (e.code === "KeyE") this.eat();
     });
     addEventListener("keyup", e => {
       if (map[e.code] !== undefined) this.input[map[e.code]] = false;
@@ -2052,6 +2120,7 @@ const Game = {
     }
     if (r.gives.block) p.counts[r.gives.block] = (p.counts[r.gives.block] || 0) + r.gives.n;
     if (r.gives.pick) p.tools.pick = Math.max(p.tools.pick, r.gives.pick);
+    if (r.gives.sword) p.tools.sword = Math.max(p.tools.sword || 0, r.gives.sword);
     Sound.blip(420, 0.09, 0.1);
     UI.updateHotbar(p);
     UI.renderCraft(p);
@@ -2097,7 +2166,7 @@ const Game = {
     if (this.attackCooldown <= 0) {
       const m = this.pickMob(eye, dir);
       if (m) {
-        m.hurt(6, dir[0] * 4, dir[2] * 4);
+        m.hurt(SWORD_DMG[this.player.tools.sword || 0], dir[0] * 4, dir[2] * 4);
         this.attackCooldown = 0.4;
         this.resetBreaking();
         return;
@@ -2204,13 +2273,24 @@ const Game = {
     }
   },
 
+  /** Eat one meat: +3 hearts, survival only. */
+  eat() {
+    const p = this.player;
+    if (this.mode !== "survival" || !p || p.hp <= 0) return;
+    if (p.meat <= 0 || p.hp >= 20) { Sound.blip(90, 0.08, 0.06); return; }
+    p.meat--;
+    p.hp = Math.min(20, p.hp + 6);
+    p.regenTimer = 0;
+    Sound.sweep(260, 140, 0.18, 0.1);
+  },
+
   /** Touch tap: swing at a mob if one is in the aim cone, otherwise place. */
   tapAction() {
     if (this.attackCooldown <= 0) {
       const dir = this.player.lookDir();
       const m = this.pickMob(this.player.eye(), dir);
       if (m) {
-        m.hurt(6, dir[0] * 4, dir[2] * 4);
+        m.hurt(SWORD_DMG[this.player.tools.sword || 0], dir[0] * 4, dir[2] * 4);
         this.attackCooldown = 0.4;
         if (navigator.vibrate) navigator.vibrate(12);
         return;
@@ -2311,6 +2391,9 @@ const Game = {
       const m = this.mobs[i];
       m.update(dt, this.player, dayFactor);
       if (m.hp <= 0) {
+        // Passive mobs only die to the player, so credit meat directly.
+        if (!m.def.hostile && this.mode === "survival")
+          this.player.meat += Math.random() < 0.4 ? 2 : 1;
         for (let j = 0; j < 10; j++)
           this.particles.push({
             pos: [m.pos[0], m.pos[1] + 0.5, m.pos[2]],
@@ -2383,6 +2466,27 @@ const Game = {
     const view = Mat4.fpsView(eye, this.player.yaw, this.player.pitch);
     const pv = Mat4.multiply(proj, view);
     const frustum = extractFrustum(pv);
+
+    // Feed the 8 nearest lanterns (within 60 blocks) to the shader.
+    const lightArr = new Float32Array(24);
+    let lightCount = 0;
+    if (this.world.lanterns.size) {
+      const cand = [];
+      for (const l of this.world.lanterns.values()) {
+        const dx = l[0] + 0.5 - eye[0], dy = l[1] + 0.5 - eye[1], dz = l[2] + 0.5 - eye[2];
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < 3600) cand.push([d2, l]);
+      }
+      cand.sort((a, b) => a[0] - b[0]);
+      lightCount = Math.min(8, cand.length);
+      for (let i = 0; i < lightCount; i++) {
+        lightArr[i * 3] = cand[i][1][0] + 0.5;
+        lightArr[i * 3 + 1] = cand[i][1][1] + 0.5;
+        lightArr[i * 3 + 2] = cand[i][1][2] + 0.5;
+      }
+    }
+    gl.uniform1f(uni.uLightCount, lightCount);
+    gl.uniform3fv(uni.uLights, lightArr);
 
     // --- Sky bodies: stars, sun, moon. Drawn depth-write-off with fog
     // pushed out so distance fog never swallows them. ---
